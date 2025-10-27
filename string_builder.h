@@ -23,8 +23,8 @@ void sb_reset(String_Builder *sb);
 
 #ifdef CREATE_STRING_BUILDER
 String_Builder *sb_create(size_t initial_size) {
-  String_Builder *sb = malloc(sizeof(*sb));
-  sb->data = malloc(initial_size);
+  String_Builder *sb = (String_Builder *)malloc(sizeof(*sb));
+  sb->data = (char *)malloc(initial_size);
   sb->len = 0;
   sb->cap = initial_size;
   sb->data[0] = '\0';
@@ -63,11 +63,11 @@ void sb_appendf(String_Builder *sb, const char *fmt, ...) {
   if (sb->len + needed + 1 > sb->cap) {
     while (sb->len + needed + 1 > sb->cap)
       sb->cap *= 2;
-    sb->data = realloc(sb->data, sb->cap);
+    sb->data = (char *)realloc(sb->data, sb->cap);
   }
 
   va_start(args, fmt);
-  //vsprintf(sb->data + sb->len, fmt, args);
+  // vsprintf(sb->data + sb->len, fmt, args);
   vsnprintf(sb->data + sb->len, sb->cap - sb->len, fmt, args);
   va_end(args);
   sb->len += needed;
@@ -81,7 +81,7 @@ void sb_append(String_Builder *sb, const char *str) {
     // double until it fits
     while (sb->len + add + 1 > sb->cap)
       sb->cap *= 2;
-    char *new_data = realloc(sb->data, sb->cap);
+    char *new_data = (char *)realloc(sb->data, sb->cap);
     if (!new_data) {
       perror("realloc");
       return; // don't assign NULL back

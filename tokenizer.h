@@ -1,13 +1,12 @@
 #pragma once
 
-// made out of frustration with stb's C lexer
-// bloody thing was so hard to figure out how to use, i think i almost exploded with rage
 
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 /* ─── Public Token API ───────────────────────────────────────────────────── */
 
