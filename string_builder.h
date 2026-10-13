@@ -1,6 +1,7 @@
 #pragma once
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 // there might be some memory leaks involving sb_append, but that's a risk we
@@ -17,9 +18,9 @@ void sb_append(String_Builder *sb, const char *str);
 void sb_append_many(String_Builder *sb, const char *first, ...);
 void sb_appendf(String_Builder *sb, const char *fmt, ...);
 void sb_reset(String_Builder *sb);
+const char *sb_to_string(String_Builder *sb);
 #define sb_append_many_end(...) sb_append_many(__VA_ARGS__, NULL)
 // better than having the end user remember how to get the string themselfs
-#define sb_to_string(sb) sb->data
 
 #ifdef CREATE_STRING_BUILDER
 String_Builder *sb_create(size_t initial_size) {
@@ -30,7 +31,7 @@ String_Builder *sb_create(size_t initial_size) {
   sb->data[0] = '\0';
   return sb;
 }
-
+const char *sb_to_string(String_Builder *sb) { return sb->data; }
 void sb_append_many(String_Builder *sb, const char *first, ...) {
   va_list args;
   sb_append(sb, first);

@@ -1,0 +1,9 @@
+{ 
+	"compilerOptions":{ 
+		"lib": ["esnext", "dom"],
+		"jsx": "react",
+		"jsxFactory": "Ion.createElement",
+		"suppressDeprecatedWarnings": true,
+		"allowImportingTsExtensions": true,
+	} 
+}

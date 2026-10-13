@@ -24,35 +24,8 @@ strip main
 abcdefghijklmnopqrstuvwxyz
 [arena]freeing all
 ===
-
-is this thread safe? Fuck no, why would you want to allocate on the heap in
-multiple threads?
-Same thing for async
-
-if you think any of the declarations/implementations are wrong, you seriusly
-need to read the fucking gnu headers, like stdlib.h
-
-// Shorthand for type of comparison functions.  //
-#ifndef __COMPAR_FN_T
-# define __COMPAR_FN_T
-typedef int (*__compar_fn_t) (const void *, const void *);
-
-# ifdef __USE_GNU
-typedef __compar_fn_t comparison_fn_t;
-# endif
-#endif
-#ifdef __USE_GNU
-typedef int (*__compar_d_fn_t) (const void *, const void *, void *);
-#endif
-
-// Do a binary search for KEY in BASE, which consists of NMEMB elements
-// of SIZE bytes each, using COMPAR to perform the comparisons.
-extern void *bsearch (const void *__key, const void *__base,
-          size_t __nmemb, size_t __size, __compar_fn_t __compar)
-     __nonnull ((1, 2, 5)) __wur;
-
-
 */
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,10 +53,20 @@ void Arena_free(void *p);
 void Arena_collect();
 void Arena_free_all();
 void Arena_assert(bool b, const char *msg);
-// this as well
-// void *bsearch(void *key, void *base, uint count, uint size, void *cmpFn);
+
+#define da_append(da, value)                                                   \
+  do {                                                                         \
+    if (da.count >= da.capacity) {                                             \
+      if (!da.capacity)                                                        \
+        da.capacity = 1;                                                       \
+      da.capacity *= 2;                                                        \
+      da.values = realloc(da.values, da.capacity * sizeof(*da.values));        \
+    }                                                                          \
+    da.values[da.count++] = value;                                             \
+  } while (0)
 
 #ifdef CREATE_ARENA
+
 void Arena_assert(bool b, const char *msg) {
   if (!b) {
     printf("%s\n", msg);
@@ -101,8 +84,8 @@ typedef struct ChunkList {
 } ChunkList;
 static char heap[HEAP_CAP] = {0};
 uint heapSize = 0;
-static ChunkList alloced_chunks = {0};
-static ChunkList freed_chunks = {0};
+static ChunkList alloced_chunks = {};
+static ChunkList freed_chunks = {};
 // typedef int (*__compar_fn_t) (const void *, const void *);
 int chunk_start_cmp(const void *a, const void *b) {
   Chunk *ac = (Chunk *)a;
@@ -110,11 +93,6 @@ int chunk_start_cmp(const void *a, const void *b) {
   return (ac->start - bc->start);
 }
 
-/*
-extern void *bsearch (const void *__key, const void *__base,
-          size_t __nmemb, size_t __size, __compar_fn_t __compar)
-     __nonnull ((1, 2, 5)) __wur;
-*/
 int chunk_list_find(ChunkList *list, void *p) {
   Chunk key = (Chunk){(char *)p, 0};
   Chunk *thing = (Chunk *)bsearch(&key, list->chunks, list->count,
@@ -227,12 +205,20 @@ void Arena_collect() {
     }
   }
 }
+
 void Arena_free_all() {
   // this likely needs to do something else, like going over every chunk and
   // freeing it, but for now this will do
   printf("[arena]freeing all\n");
+  while (alloced_chunks.count > 0) {
+    Arena_free(alloced_chunks.chunks[0].start);
+  }
+
+  Arena_collect();
+
   heapSize = 0;
   freed_chunks.count = 0;
   alloced_chunks.count = 0;
 }
+
 #endif

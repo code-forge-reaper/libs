@@ -1,5 +1,14 @@
 #pragma once
+/*
+lua_ffi.hpp - made to make working with lua in c++ slightly easier
 
+this is literaly the only serious use for c++ that i have, i just treat it as C
+with mild weirdness
+
+it is mostly for making OOP between C++ and Lua less painfull
+*/
+
+#include <cstring>
 #include <lua.hpp>
 #include <string>
 #include <type_traits>
@@ -17,9 +26,10 @@
   } while (0)
 // Generic function pointer for Lua C functions
 using lua_func = int (*)(lua_State *);
+
 #define newState(x)                                                            \
   lua_State *x = luaL_newstate();                                              \
-  luaopen_base(x)
+  luaL_openlibs(x)
 #define lfn static int
 #define LUA_DEF(name, type, value, L)                                          \
   do {                                                                         \
@@ -46,8 +56,18 @@ using lua_func = int (*)(lua_State *);
 
 #define LUA_DEF_S(name, value, L) LUA_DEF(name, string, value, L)
 #define LUA_DEF_I(name, value, L) LUA_DEF(name, integer, value, L)
+#define LUA_DEF_F(name, value, L) LUA_DEF(name, number, value, L)
 #define LUA_DEF_N(name, value, L) LUA_DEF(name, number, value, L)
 #define LUA_DEF_B(name, value, L) LUA_DEF(name, boolean, value, L)
+#define ENSURE_GLOBAL_FUNCTION(l, name)                                        \
+  do {                                                                         \
+    lua_getglobal(l, name);                                                    \
+    if (!lua_isfunction(l, -1)) {                                              \
+      FPANIC("expected '%s' to be a function, but got %s", name,               \
+             lua_typename(l, lua_type(l, -1)));                                \
+    }                                                                          \
+    lua_pop(l, 1);                                                             \
+  } while (0)
 
 // ----------------- GC wrapper for template types -----------------
 template <typename T> static int lua_gc_wrapper(lua_State *L) {
@@ -64,17 +84,31 @@ template <typename T> static int lua_gc_wrapper(lua_State *L) {
   return 0;
 }
 
+#define lua_mod(name, funcs...)                                                \
+  extern "C" int luaopen_##name(lua_State *l) {                                \
+    static luaL_Reg func[] = {funcs};                                          \
+    LUA_BEGIN_TABLE(l);                                                        \
+    push_funcs(l, func);                                                       \
+    return 1;                                                                  \
+  }
 // ----------------- register a metatable and methods once --------------
 inline void register_metatable(lua_State *L, const char *metaname,
                                const luaL_Reg funcs[]) {
-  // If metatable already exists in registry, just ensure __index points to
-  // itself
+  // If metatable already exists in registry, ensure __index points to itself
   luaL_getmetatable(L, metaname); // pushes value or nil
   if (!lua_isnil(L, -1)) {
-    // ensure __index is set to the metatable itself
-    lua_pushvalue(L, -1);           // push metatable
-    lua_setfield(L, -2, "__index"); // metatable.__index = metatable
-    lua_pop(L, 1);                  // pop metatable
+    // check if __index is already set
+    lua_getfield(L, -1, "__index"); // push metatable.__index
+    if (lua_isnil(L, -1)) {
+      // not set -> set to metatable
+      lua_pop(L, 1);                  // pop nil
+      lua_pushvalue(L, -1);           // duplicate metatable
+      lua_setfield(L, -2, "__index"); // metatable.__index = metatable
+    } else {
+      // __index already present (function or table) — leave it alone
+      lua_pop(L, 1); // pop __index value
+    }
+    lua_pop(L, 1); // pop metatable
     return;
   }
   lua_pop(L, 1); // pop the nil
@@ -98,9 +132,15 @@ inline void register_metatable(lua_State *L, const char *metaname,
   }
 #endif
 
-  // metatable.__index = metatable
-  lua_pushvalue(L, -1);
-  lua_setfield(L, -2, "__index");
+  // Only set metatable.__index = metatable if __index wasn't provided by funcs
+  lua_getfield(L, -1, "__index"); // push whatever is at metatable.__index
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);                  // pop nil
+    lua_pushvalue(L, -1);           // duplicate metatable
+    lua_setfield(L, -2, "__index"); // metatable.__index = metatable
+  } else {
+    lua_pop(L, 1); // __index already present, leave as-is
+  }
 
   lua_pop(L, 1); // pop metatable
 }
@@ -108,7 +148,7 @@ inline void register_metatable(lua_State *L, const char *metaname,
 // ---------- push userdata (pointer) and attach existing metatable ----------
 template <typename T>
 void pushPtrWithMeta(lua_State *L, T *ptr, const char *metaname,
-                     bool gc = true) {
+                     bool defaultGc = true) {
   if (!ptr) {
     lua_pushnil(L);
     return;
@@ -122,19 +162,20 @@ void pushPtrWithMeta(lua_State *L, T *ptr, const char *metaname,
   // get metatable from registry (does not create)
   luaL_getmetatable(L, metaname); // pushes metatable or nil
   if (lua_isnil(L, -1)) {
-    // no existing metatable -> create one
     lua_pop(L, 1);
-    luaL_newmetatable(L, metaname); // pushes new metatable
-    // make sure __index points to itself
-    lua_pushvalue(L, -1);
-    lua_setfield(L, -2, "__index");
+    luaL_error(L, "Failed to get metatable %s", metaname);
+    return;
   }
   // stack: userdata, metatable
 
-  if (gc) {
-    // attach GC function (overwrite if already present)
-    lua_pushcfunction(L, &lua_gc_wrapper<T>);
-    lua_setfield(L, -2, "__gc");
+  if (defaultGc) {
+    lua_getfield(L, -1, "__gc");
+    if (lua_isnil(L, -1)) {
+      lua_pop(L, 1); // pop __gc
+      lua_pushcfunction(L, &lua_gc_wrapper<T>);
+      lua_setfield(L, -2, "__gc");
+    }
+    lua_pop(L, 1);
   }
 
   // set the metatable on userdata (this pops metatable)
@@ -143,7 +184,8 @@ void pushPtrWithMeta(lua_State *L, T *ptr, const char *metaname,
 }
 
 // overload that uses typeid(T).name() as metatable name (fallback)
-template <typename T> void pushPtr(lua_State *L, T *ptr, bool gc = true) {
+template <typename T>
+void pushPtr(lua_State *L, T *ptr, bool defaultGc = true) {
   if (!ptr) {
     lua_pushnil(L);
     return;
@@ -157,20 +199,21 @@ template <typename T> void pushPtr(lua_State *L, T *ptr, bool gc = true) {
   // luaL_newmetatable pushes the metatable on the stack and returns 1 if it
   // was created
   if (luaL_newmetatable(L, metatype)) {
-    // newly created metatable
     lua_pushvalue(L, -1);
     lua_setfield(L, -2, "__index");
-    if (gc) {
+  }
+
+  if (defaultGc) {
+    lua_getfield(L, -1, "__gc");
+    if (lua_isnil(L, -1)) {
+      lua_pop(L, 1);
       lua_pushcfunction(L, &lua_gc_wrapper<T>);
       lua_setfield(L, -2, "__gc");
-    }
-  } else {
-    // metatable already existed; ensure __gc if requested
-    if (gc) {
-      lua_pushcfunction(L, &lua_gc_wrapper<T>);
-      lua_setfield(L, -2, "__gc");
+    } else {
+      lua_pop(L, 1);
     }
   }
+
   // set metatable on userdata (pops metatable)
   lua_setmetatable(L, -2);
 }
@@ -179,7 +222,7 @@ template <typename T> void pushPtr(lua_State *L, T *ptr, bool gc = true) {
 #define ATTACH_TYPE(L, NAME, FUNCS) register_metatable((L), (NAME), (FUNCS))
 #define PUSH_ATTACHED(L, T, PTR, NAME, GC)                                     \
   pushPtrWithMeta<T>((L), (PTR), (NAME), (GC))
-
+#define METHOD(type, name) static int type##_##name(lua_State *l)
 // ---------------- Pointer FFI: push/get pointers with optional GC
 // ----------------
 
@@ -370,7 +413,7 @@ inline void create_class_table(lua_State *L, const char *luaName,
   lua_setglobal(L, luaName); // global LuaName = the table
 }
 
-// ---------- Primary macro (keeps your original convenience) ----------
+// ---------- Primary macro ----------
 #define LUA_CLASS(Type, LuaName, METHOD_INITS...)                              \
   static const luaL_Reg Type##_methods[] = {METHOD_INITS, {NULL, NULL}};       \
   static const luaL_Reg Type##_class[] = {{"new", Type##_new}, {NULL, NULL}};  \
@@ -386,4 +429,38 @@ inline void newModule(const char *name, const luaL_Reg funcs[], lua_State *L) {
   lua_newtable(L);
   push_funcs(L, funcs);
   lua_setglobal(L, name);
+}
+
+// ---------------- Generic lua_push dispatcher ----------------
+
+inline void lua_push_any(lua_State *L, std::nullptr_t) { lua_pushnil(L); }
+
+inline void lua_push_any(lua_State *L, const char *v) { lua_pushstring(L, v); }
+
+inline void lua_push_any(lua_State *L, char *v) { lua_pushstring(L, v); }
+
+inline void lua_push_any(lua_State *L, const std::string &v) {
+  lua_pushlstring(L, v.c_str(), v.size());
+}
+
+inline void lua_push_any(lua_State *L, bool v) { lua_pushboolean(L, v); }
+
+inline void lua_push_any(lua_State *L, int v) { lua_pushinteger(L, v); }
+
+inline void lua_push_any(lua_State *L, long v) { lua_pushinteger(L, v); }
+
+inline void lua_push_any(lua_State *L, lua_Integer v) { lua_pushinteger(L, v); }
+
+inline void lua_push_any(lua_State *L, float v) { lua_pushnumber(L, v); }
+
+inline void lua_push_any(lua_State *L, double v) { lua_pushnumber(L, v); }
+
+// pointer fallback -> userdata
+template <typename T> inline void lua_push_any(lua_State *L, T *ptr) {
+  pushPtr(L, ptr);
+}
+
+// hard error for unsupported types
+template <typename T> inline void lua_push_any(lua_State *L, const T &) {
+  static_assert(sizeof(T) == 0, "Unsupported type passed to lua_push_any");
 }
